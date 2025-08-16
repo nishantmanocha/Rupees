@@ -1,0 +1,158 @@
+You are an expert React Native (Expo) architect. Build a production-ready Expo (latest) app in TypeScript that helps users plan savings and compare “saving only” vs “saving + investing”.
+
+## Tech + Libraries
+- Expo (latest), TypeScript
+- State: Zustand (lightweight), persist to AsyncStorage
+- Navigation: @react-navigation/native (stack + bottom tabs)
+- UI: React Native + Tailwind via nativewind (or classnames wrapper). Clean, modern, accessible.
+- Icons: lucide-react-native
+- Charts: react-native-chart-kit
+- Forms: react-hook-form + zod resolver
+- Dates: dayjs
+- Storage: @react-native-async-storage/async-storage
+- Theming: light/dark, system-aware
+
+## Core Concept
+User enters:
+1) Monthly income  
+2) Recurring expenses (e.g., rent, EMI, utilities, groceries, transport, subscriptions, “other”)  
+3) One or more **savings goals** (target amount + optional target date)
+
+The app:
+- Calculates surplus = income − total expenses
+- Shows how long to reach each goal with **saving only** (surplus per month) and **saving + investing** (SIP-like projection)
+- Breaks surplus into per-day and per-week recommended saving
+- Provides improvement tips to increase surplus
+- Compares multiple investment options and plots growth (bar + line charts)
+- Includes a **Learn** section with Q&A and beginner-friendly investing checklists (add several questions yourself)
+
+## Investment Options (configurable defaults)
+Create a central config with default annual return rates (editable in Settings):
+- PPF: 7.1%
+- Nifty 50 Index Fund (equity MF): 12%
+- Gold ETF: 8%
+- Sovereign Gold Bond (SGB): 7.5% + extra 2.5% interest component (model as 10% total for simplicity, but keep label)
+- Debt Mutual Fund: 6.5%
+- Fixed Deposit (FD): 7%
+- Recurring Deposit (RD): 6.8%
+- (You may add more sensible options; all must be editable by user)
+
+Assume **monthly compounding** for simplicity unless the instrument typically differs; expose compounding frequency per instrument in config for future flexibility.
+
+## Calculations (implement as pure utils with tests)
+- `monthlySurplus = income - sum(expenses)`
+- **Saving-only projection**:
+  - monthsToGoal = ceil(goalAmount / monthlySurplus) if monthlySurplus > 0, else Infinity
+  - dailySaving = monthlySurplus / 30
+  - weeklySaving = monthlySurplus / 4
+  - create an array of monthly cumulative savings for charting (t=0…N)
+- **SIP-style investing projection** for each instrument:
+  - Given monthly contribution = monthlySurplus (or user-adjustable allocation per instrument)
+  - Monthly rate r = annualRate / 12
+  - Future value after n months: `FV = contribution * [((1 + r)^n - 1) / r] * (1 + r)` (end-of-month deposits; if r=0 handle divide-by-zero)
+  - To estimate monthsToGoal with investing: iterate n until FV >= goalAmount (cap at, say, 600 months), or solve with logs if r>0.
+  - Produce arrays for charting: per-month balances for (saving-only) and (each instrument)
+- Edge cases: if surplus <= 0, show helpful warnings and improvement tips; do not crash.
+
+## App Structure
+- Root: Stack (Onboarding/Authless → Tabs)
+- Tabs:
+  1) **Plan** (default)
+  2) **Compare**
+  3) **Goals**
+  4) **Learn**
+  5) **Settings**
+
+### Screens & Features
+
+#### OnboardingScreen
+- Brief intro slides with illustrations (use icons as placeholders)
+- Ask for monthly income (number), then guide to add expenses.
+- CTA → “Start Planning”
+
+#### PlanScreen (Tab 1)
+- Top: Summary card: Income, Total Expenses, Surplus (with lucide icons: Wallet, Receipt, PiggyBank)
+- Inputs/buttons to quickly adjust income or add/edit expenses
+- Show **Daily** and **Weekly** recommended saving from surplus
+- If a primary goal exists, show:
+  - Time to reach (saving-only vs best-investing option)
+  - Mini line chart comparing cumulative balances for 12–24 months
+- Improvement Tips section (dynamic; see Tips below)
+
+#### CompareScreen (Tab 2)
+- User can pick: 
+  - Goal amount (or choose from Goals)
+  - Monthly contribution (default = current surplus)
+  - Horizon selector (6, 12, 24, 36, 60, 120 months)
+  - Instruments multi-select from config
+- Render:
+  - **Line chart**: growth over time for each selected instrument + saving-only
+  - **Bar chart**: final amount at horizon, sorted desc
+- A small table below with:
+  - Instrument name, assumed annual rate, final value, gain vs saving-only
+- CTA: “Set as Plan” to push chosen horizon + instrument mix to PlanScreen
+
+#### GoalsScreen (Tab 3)
+- List of goals (Card layout):
+  - Title, Target amount, Optional target date
+  - Badges: “Saving-only: X months”, “Investing: Y months”
+- Add/Edit Goal modal (title, amount, target date optional)
+- Tap a goal → GoalDetail:
+  - Two charts: saving-only vs best-investment projection
+  - Month-by-month schedule table
+  - Share/Export (export as JSON via FileSystem)
+
+#### LearnScreen (Tab 4)
+Provide curated content cards (Q&A and checklists). Add at least 10 items:
+- “What to check before investing?” (expense ratio, track record, benchmark, risk profile, tax, lock-in, liquidity)
+- “PPF basics”
+- “What is SIP?”
+- “Gold ETF vs SGB”
+- “FD vs Debt MF”
+- “Risk vs Return”
+- “Diversification 101”
+- “How to pick an index fund”
+- “What is RD and who should use it”
+- “Tax considerations overview”
+For each, provide a short, friendly explanation and a “Learn more” expandable section.
+
+#### SettingsScreen (Tab 5)
+- Edit default annual return rates per instrument
+- Toggle dark mode / system theme
+- Backup & Restore data (export/import JSON to device)
+- Reset all data
+
+### Data Model (TypeScript)
+```ts
+type Expense = {
+  id: string;
+  name: string; // Rent, EMI, etc.
+  amount: number; // per month
+  category?: 'Housing'|'EMI'|'Utilities'|'Groceries'|'Transport'|'Subscriptions'|'Other';
+};
+
+type Goal = {
+  id: string;
+  title: string;
+  targetAmount: number;
+  targetDate?: string; // ISO
+  createdAt: string;
+};
+
+type InstrumentConfig = {
+  id: string;
+  name: string;           // "PPF", "Nifty Index", etc.
+  annualRate: number;     // 0.071 for 7.1%
+  compoundingPerYear: number; // default 12
+  enabled: boolean;
+  description?: string;
+};
+
+type AppState = {
+  income: number;
+  expenses: Expense[];
+  goals: Goal[];
+  instruments: InstrumentConfig[];
+  theme: 'light' | 'dark' | 'system';
+  primaryGoalId?: string;
+};
